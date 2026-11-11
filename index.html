@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="zh-MY">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#1e3a8a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="GPK 日程表" />
+  <title>GPK Pentadbiran 专属日程与统筹系统 (SJKC)</title>
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+  <link rel="apple-touch-icon" href="./icon.svg" />
+  <link rel="stylesheet" href="./styles.css" />
+  <!-- 引入 SheetJS 用于直接读取与导出 Excel (.xlsx / .csv) 工作表 -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <!-- 顶部状态与品牌栏 -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="app-logo">GPK1</div>
+      <div>
+        <h1 class="app-title">GPK Pentadbiran 统筹日程</h1>
+        <p class="app-subtitle" id="headerSubtitle">SJKC 行政与学术 · 个人与学校日历</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button class="sync-badge" id="syncStatusBtn" onclick="switchTab('sync')" title="点击配置或立即同步 Google Sheet & Drive">
+        <span class="sync-dot" id="syncDot"></span>
+        <span id="syncStatusText">本机模式 (可连 Google Drive)</span>
+      </button>
+      <button class="btn-icon-header" id="quickSyncBtn" onclick="manualCloudSync()" title="立即与 Google Sheet 同步">
+        🔄
+      </button>
+    </div>
+  </header>
+
+  <!-- 全局颜色图例与快速筛选栏 -->
+  <section class="filter-bar">
+    <button class="filter-chip active" data-filter="all" onclick="setCategoryFilter('all')">
+      <span>全部事项</span>
+      <span class="chip-count" id="count-all">0</span>
+    </button>
+    <button class="filter-chip chip-bidang" data-filter="bidang" onclick="setCategoryFilter('bidang')">
+      <span class="color-dot dot-bidang"></span>
+      <span>我的 Bidang</span>
+      <span class="chip-count" id="count-bidang">0</span>
+    </button>
+    <button class="filter-chip chip-school" data-filter="school" onclick="setCategoryFilter('school')">
+      <span class="color-dot dot-school"></span>
+      <span>学校 / 配合他组</span>
+      <span class="chip-count" id="count-school">0</span>
+    </button>
+    <button class="filter-chip chip-personal" data-filter="personal" onclick="setCategoryFilter('personal')">
+      <span class="color-dot dot-personal"></span>
+      <span>个人 (Peribadi)</span>
+      <span class="chip-count" id="count-personal">0</span>
+    </button>
+    <button class="filter-chip chip-delegate" data-filter="delegate" onclick="setCategoryFilter('delegate')">
+      <span>👥 待老师完成</span>
+      <span class="chip-count" id="count-delegate">0</span>
+    </button>
+  </section>
+
+  <!-- 主内容容器 -->
+  <main class="main-container">
+    <!-- ==================== TAB 1: 日历视图 (KALENDAR) ==================== -->
+    <section id="tab-calendar" class="tab-view active">
+      <div class="calendar-layout">
+        <!-- 左侧/上方：多色月历面板 -->
+        <div class="calendar-card">
+          <div class="calendar-toolbar">
+            <div class="month-nav">
+              <button class="btn-nav" onclick="changeMonth(-1)" aria-label="上个月">◀</button>
+              <h2 class="current-month-label" id="currentMonthLabel">2026年 11月</h2>
+              <button class="btn-nav" onclick="changeMonth(1)" aria-label="下个月">▶</button>
+            </div>
+            <div class="calendar-toolbar-right">
+              <button class="btn-today" onclick="goToToday()">今天</button>
+              <button class="btn-import-mini" onclick="openWorksheetImportModal()">📥 导入Excel校历</button>
+            </div>
+          </div>
+
+          <!-- 多色图例说明 -->
+          <div class="calendar-legend">
+            <span class="legend-item"><i class="dot-bidang"></i>蓝色：我的 Bidang (我准备/老师做)</span>
+            <span class="legend-item"><i class="dot-school"></i>青色：学校/配合其他 Bidang</span>
+            <span class="legend-item"><i class="dot-personal"></i>紫色：个人事务</span>
+            <span class="legend-item"><i class="dot-holiday"></i>红/橙：公共与学校假期</span>
+          </div>
+
+          <!-- 星期表头 (周日 - 周六) -->
+          <div class="calendar-weekdays">
+            <div class="weekday weekend">日<small>Aha</small></div>
+            <div class="weekday">一<small>Isn</small></div>
+            <div class="weekday">二<small>Sel</small></div>
+            <div class="weekday">三<small>Rab</small></div>
+            <div class="weekday">四<small>Kha</small></div>
+            <div class="weekday">五<small>Jum</small></div>
+            <div class="weekday weekend">六<small>Sab</small></div>
+          </div>
+
+          <!-- 日历网格 -->
+          <div class="calendar-grid" id="calendarGrid"></div>
+        </div>
+
+        <!-- 右侧/下方：选中日期的多色详情与操作面板 -->
+        <div class="day-detail-card" id="dayDetailCard">
+          <div class="day-detail-header">
+            <div>
+              <div class="selected-date-badge" id="selectedDateBadge">2026-11-11 (星期三)</div>
+              <h3 class="selected-date-title" id="selectedDateTitle">当日行程与统筹事项</h3>
+            </div>
+            <button class="btn-primary-sm" onclick="openTaskModal(null, state.selectedDate)">
+              ＋ 加在此日
+            </button>
+          </div>
+
+          <!-- 当日同日多色概览条 -->
+          <div id="selectedDayColorSummary" class="day-color-summary"></div>
+
+          <!-- 当日假期横幅 -->
+          <div id="selectedDayHolidays" class="day-holidays-list"></div>
+
+          <!-- 当日事项列表（按颜色与行动分类展示） -->
+          <div id="selectedDayTasks" class="day-tasks-list"></div>
+
+          <!-- 近期需提前筹备提醒 (Countdown) -->
+          <div class="prep-radar-box">
+            <div class="prep-radar-header">
+              <span>⏰ 近期筹备雷达（需提前准备/催交事项）</span>
+            </div>
+            <div id="prepRadarList" class="prep-radar-list"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 2: 统筹看板 (TUGASAN & BIDANG) ==================== -->
+    <section id="tab-board" class="tab-view">
+      <div class="board-toolbar">
+        <div class="search-box">
+          <span>🔍</span>
+          <input type="text" id="boardSearchInput" placeholder="搜索事项、Panitia、老师名字、备注..." oninput="renderBoard()" />
+        </div>
+        <div class="board-status-tabs">
+          <button class="status-pill active" data-status="active" onclick="setBoardStatusFilter('active')">未完成 / 进行中</button>
+          <button class="status-pill" data-status="done" onclick="setBoardStatusFilter('done')">已完成 / 已收齐</button>
+          <button class="status-pill" data-status="all" onclick="setBoardStatusFilter('all')">全部记录</button>
+        </div>
+      </div>
+
+      <!-- 四大核心分栏看板 -->
+      <div class="board-columns">
+        <!-- 1. 蓝色A：我的 Bidang - 我需准备/亲自处理 -->
+        <div class="board-col col-bidang">
+          <div class="board-col-header">
+            <div>
+              <span class="badge-cat badge-bidang">🔵 我的 Bidang</span>
+              <h4>👤 我需准备 / 亲自处理</h4>
+            </div>
+            <button class="btn-col-add" onclick="openQuickCategoryModal('bidang', 'my_prep')">＋</button>
+          </div>
+          <p class="col-desc">排课、Mesyuarat Kurikulum 准备、Pencerapan、审核 RPH 等</p>
+          <div class="board-col-list" id="col-bidang-my"></div>
+        </div>
+
+        <!-- 2. 蓝色B：我的 Bidang - 交代老师/Panitia 跟进 -->
+        <div class="board-col col-bidang-delegate">
+          <div class="board-col-header">
+            <div>
+              <span class="badge-cat badge-bidang">🔵 我的 Bidang</span>
+              <h4>👥 交代老师做 / 待收齐跟进</h4>
+            </div>
+            <button class="btn-col-add" onclick="openQuickCategoryModal('bidang', 'delegate')">＋</button>
+          </div>
+          <p class="col-desc">Ketua Panitia 报告、老师输入 PBD/UASA、交考卷、课程计划</p>
+          <div class="board-col-list" id="col-bidang-delegate"></div>
+        </div>
+
+        <!-- 3. 青色：学校事务 / 配合其他 Bidang (HEM / Koko / 校长 / PPD) -->
+        <div class="board-col col-school">
+          <div class="board-col-header">
+            <div>
+              <span class="badge-cat badge-school">🟢 学校与配合</span>
+              <h4>🤝 学校活动 / 配合其他 Bidang</h4>
+            </div>
+            <button class="btn-col-add" onclick="openQuickCategoryModal('school', 'my_prep')">＋</button>
+          </div>
+          <p class="col-desc">配合 HEM / Koko / 校长交办事项、全校庆典、PPD/JPN 呈交资料</p>
+          <div class="board-col-list" id="col-school-all"></div>
+        </div>
+
+        <!-- 4. 紫色：个人事务 (无关工作) -->
+        <div class="board-col col-personal">
+          <div class="board-col-header">
+            <div>
+              <span class="badge-cat badge-personal">🟣 个人生活</span>
+              <h4>🏠 个人事务 (Peribadi)</h4>
+            </div>
+            <button class="btn-col-add" onclick="openQuickCategoryModal('personal', 'event')">＋</button>
+          </div>
+          <p class="col-desc">家庭行程、私人预约、健康检查、个人计划（与学校工作分开）</p>
+          <div class="board-col-list" id="col-personal-all"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 3: 工作表与 Drive 文件库 (FAIL & WORKSHEET) ==================== -->
+    <section id="tab-files" class="tab-view">
+      <div class="files-grid-layout">
+        <!-- 左栏：工作表批量导入与导出 -->
+        <div class="feature-card">
+          <h3>📊 工作表 (Excel / CSV / Google Sheet) 工具箱</h3>
+          <p class="card-subtext">您可以把学校的 Takwim Excel 表批量导入日历，或把目前的日程导出成 Excel 表格存档打印。</p>
+          
+          <div class="action-buttons-stack">
+            <button class="btn-action-card" onclick="openWorksheetImportModal()">
+              <span class="action-icon">📥</span>
+              <div>
+                <strong>从 Excel / CSV 工作表批量导入日程</strong>
+                <small>支持 .xlsx, .xls, .csv 格式，自动识别日期、事项与颜色分类</small>
+              </div>
+            </button>
+
+            <button class="btn-action-card" onclick="exportToExcel()">
+              <span class="action-icon">📤</span>
+              <div>
+                <strong>导出全部日程为 Excel 工作表 (.xlsx)</strong>
+                <small>按 Bidang、状态、负责老师生成整齐的 Excel 报表</small>
+              </div>
+            </button>
+
+            <button class="btn-action-card" onclick="downloadTemplateExcel()">
+              <span class="action-icon">📄</span>
+              <div>
+                <strong>下载标准导入模板 (Takwim_Template.xlsx)</strong>
+                <small>下载示范 Excel 表，填好后可一键导入全校活动或假期</small>
+              </div>
+            </button>
+          </div>
+
+          <hr class="divider" />
+
+          <h4>☁️ 快速上传独立文件到我的 Google Drive</h4>
+          <p class="card-subtext">不绑定特定日期，直接上传常用工作表（如 Jadual Waktu 总表、名册）到 Google Drive 并记录在此。</p>
+          <div class="standalone-upload-box">
+            <input type="file" id="standaloneFileInput" multiple onchange="handleStandaloneFileUpload(event)" style="display:none" />
+            <button class="btn-primary" onclick="document.getElementById('standaloneFileInput').click()">
+              📎 选择手机/电脑文件上传 (Excel / PDF / Word / 图片)
+            </button>
+            <button class="btn-outline" onclick="openAddDriveLinkModal()">
+              🔗 添加现有 Google Sheet / Drive 链接
+            </button>
+          </div>
+        </div>
+
+        <!-- 右栏：所有已上传工作表与附件总览 -->
+        <div class="feature-card">
+          <div class="files-header-row">
+            <h3>📁 已关联的工作表与文件库</h3>
+            <span class="badge-count" id="totalFilesCount">0 个文件</span>
+          </div>
+          <div class="search-box" style="margin-bottom: 12px;">
+            <span>🔍</span>
+            <input type="text" id="fileSearchInput" placeholder="搜索文件名、工作表、所属事项..." oninput="renderFilesLibrary()" />
+          </div>
+          <div id="filesLibraryList" class="files-library-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 4: Google Sheet/Drive 云同步与假期设置 ==================== -->
+    <section id="tab-sync" class="tab-view">
+      <div class="settings-grid-layout">
+        <!-- Google Sheet & Drive 连接面板 -->
+        <div class="feature-card">
+          <div class="card-title-with-badge">
+            <h3>☁️ 善用您的 Google Drive & Google Sheet 空间</h3>
+            <span class="status-tag" id="connStatusTag">未配置云端 URL</span>
+          </div>
+          <p class="card-subtext">
+            连接后，您在手机或电脑记录的所有事项会自动保存在您的 <strong>Google Sheet</strong>，上传的工作表与文件会自动存进您 <strong>Google Drive</strong> 的 <code>GPK_Pentadbiran_Drive_Files</code> 文件夹！
+          </p>
+
+          <div class="form-group">
+            <label for="gasUrlInput"><strong>Google Apps Script 网页应用网址 (Web App URL)</strong></label>
+            <input type="url" id="gasUrlInput" class="form-input" placeholder="https://script.google.com/macros/s/xxxxxx/exec" />
+          </div>
+
+          <div class="form-group">
+            <label for="googleSheetLinkInput"><strong>您的 Google Sheet 表格原网址 (选填，方便在 App 内一键打开表格)</strong></label>
+            <input type="url" id="googleSheetLinkInput" class="form-input" placeholder="https://docs.google.com/spreadsheets/d/xxxxxx/edit" />
+          </div>
+
+          <div class="btn-row-wrap">
+            <button class="btn-primary" onclick="saveAndTestCloudConnection()">💾 保存并立即同步测试</button>
+            <button class="btn-secondary" onclick="pullFromGoogleSheet()">⬇️ 从 Google Sheet 拉取最新数据</button>
+            <button class="btn-outline" id="openSheetDirectBtn" onclick="openConnectedGoogleSheet()">📗 直接打开我的 Google Sheet</button>
+          </div>
+
+          <!-- 3分钟配置教学手风琴 -->
+          <div class="setup-guide-box">
+            <div class="setup-guide-header" onclick="toggleSetupGuide()">
+              <span>📖 <strong>第一次使用？点此展开 2 分钟连接 Google Drive 教学（附一键复制代码）</strong></span>
+              <span id="guideToggleArrow">▼</span>
+            </div>
+            <div class="setup-guide-body" id="setupGuideBody">
+              <ol class="guide-steps">
+                <li>打开您的 Google Drive，新建一个空白的 <strong>Google Sheet</strong>（例如命名为：<code>GPK Pentadbiran 日程表</code>）。</li>
+                <li>在 Google Sheet 顶部菜单点击 <strong>【扩展程序 (Extensions)】 ➔ 【Apps Script】</strong>。</li>
+                <li>删除里面原有的几行代码，点击下方按钮<strong>一键复制后台脚本代码</strong>，粘贴进去并按 <code>Ctrl + S</code> 保存。</li>
+                <li>点击右上角蓝色按钮 <strong>【部署 (Deploy)】 ➔ 【新建部署 (New deployment)】</strong>。</li>
+                <li>左上角类型选 <strong>【网页应用 (Web app)】</strong>：
+                  <ul>
+                    <li>执行身份 (Execute as)：选 <strong>我 (Me)</strong></li>
+                    <li>谁可以访问 (Who has access)：选 <strong>所有人 (Anyone)</strong></li>
+                  </ul>
+                </li>
+                <li>点击部署并完成 Google 账号授权（点 Advanced -> Go to project），复制生成的 <code>https://script.google.com/macros/s/.../exec</code> 网址，粘贴到上方输入框即可！</li>
+              </ol>
+              <button class="btn-copy-code" onclick="copyAppsScriptCode()">📋 一键复制 Google Apps Script 完整代码 (Code.gs)</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 假期管理面板（公共假期 + KPM学校假期 + 特假 Cuti Peristiwa） -->
+        <div class="feature-card">
+          <h3>🏖️ 马来西亚公共假期 & 学校特假 (Cuti Peristiwa) 管理</h3>
+          <p class="card-subtext">已内置 2026–2027 马来西亚公共假期与教育部 KPM B组州属学校假期。您可在下方添加贵校的<strong>特假 (Cuti Peristiwa)</strong> 或州属假期：</p>
+
+          <div class="add-holiday-form">
+            <input type="text" id="newHolidayTitle" class="form-input" placeholder="假期名称（例：Cuti Peristiwa 1 - 运动会后特假 / 柔佛苏丹华诞）" />
+            <div class="form-row-2">
+              <div>
+                <label class="mini-label">开始日期</label>
+                <input type="date" id="newHolidayStart" class="form-input" />
+              </div>
+              <div>
+                <label class="mini-label">结束日期</label>
+                <input type="date" id="newHolidayEnd" class="form-input" />
+              </div>
+            </div>
+            <div class="form-row-2">
+              <select id="newHolidayType" class="form-input">
+                <option value="peristiwa">🏫 学校特假 (Cuti Peristiwa)</option>
+                <option value="school">🎒 学校假期 (Cuti Sekolah)</option>
+                <option value="public">🇲🇾 公共/州属假期 (Cuti Umum/Negeri)</option>
+              </select>
+              <button class="btn-primary" onclick="addCustomHoliday()">＋ 添加假期到日历</button>
+            </div>
+          </div>
+
+          <div class="holiday-list-container" id="holidayManageList"></div>
+
+          <hr class="divider" />
+          <h4>📦 本机数据备份与还原</h4>
+          <div class="btn-row-wrap">
+            <button class="btn-outline" onclick="exportJsonBackup()">⬇️ 下载完整备份 (.json)</button>
+            <button class="btn-outline" onclick="document.getElementById('jsonRestoreInput').click()">⬆️ 恢复备份文件</button>
+            <input type="file" id="jsonRestoreInput" accept=".json" style="display:none" onchange="importJsonBackup(event)" />
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 手机端与桌面端右下角悬浮新增按钮 (FAB) -->
+  <button class="fab-add" onclick="openTaskModal(null, state.selectedDate)" title="新增日程或待办事项">
+    <span>＋</span>
+    <span class="fab-text">记一事</span>
+  </button>
+
+  <!-- 底部手机 App 导航栏 -->
+  <nav class="bottom-nav">
+    <button class="nav-item active" data-tab="calendar" onclick="switchTab('calendar')">
+      <span class="nav-icon">📅</span>
+      <span class="nav-label">多色日历</span>
+    </button>
+    <button class="nav-item" data-tab="board" onclick="switchTab('board')">
+      <span class="nav-icon">📋</span>
+      <span class="nav-label">Bidang看板</span>
+      <span class="nav-badge" id="navPendingBadge">0</span>
+    </button>
+    <button class="nav-item" data-tab="files" onclick="switchTab('files')">
+      <span class="nav-icon">📁</span>
+      <span class="nav-label">工作表/文件</span>
+    </button>
+    <button class="nav-item" data-tab="sync" onclick="switchTab('sync')">
+      <span class="nav-icon">☁️</span>
+      <span class="nav-label">Drive与假期</span>
+    </button>
+  </nav>
+
+  <!-- ==================== 弹窗 1：新增 / 编辑事项 Modal ==================== -->
+  <div class="modal-overlay" id="taskModalOverlay" onclick="closeModalOnBg(event, 'taskModalOverlay')">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <h3 id="taskModalTitle">新增日程 / 任务</h3>
+        <button class="btn-close" onclick="closeTaskModal()">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <input type="hidden" id="taskIdInput" />
+
+        <!-- GPK 华小常用快捷模板 -->
+        <div class="quick-templates-bar">
+          <span class="template-label">⚡ 快速填入：</span>
+          <button type="button" class="tpl-chip" onclick="applyQuickTemplate('kurikulum')">📘 课程会议准备</button>
+          <button type="button" class="tpl-chip" onclick="applyQuickTemplate('panitia')">👥 催交Panitia资料</button>
+          <button type="button" class="tpl-chip" onclick="applyQuickTemplate('pbd')">📊 跟进老师PBD/UASA</button>
+          <button type="button" class="tpl-chip" onclick="applyQuickTemplate('pencerapan')">🔍 视察教学Pencerapan</button>
+          <button type="button" class="tpl-chip" onclick="applyQuickTemplate('hem_koko')">🤝 配合HEM/Koko事务</button>
+        </div>
+
+        <!-- 1. 选择颜色分类 (Category) -->
+        <div class="form-group">
+          <label class="form-label">1. 所属分类（决定日历颜色）</label>
+          <div class="category-selector" id="categorySelector">
+            <label class="cat-option cat-opt-bidang active" onclick="selectModalCategory('bidang')">
+              <input type="radio" name="taskCategory" value="bidang" checked />
+              <span class="cat-dot dot-bidang"></span>
+              <div>
+                <strong>蓝色：我的 Bidang</strong>
+                <small>Pentadbiran & Kurikulum</small>
+              </div>
+            </label>
+            <label class="cat-option cat-opt-school" onclick="selectModalCategory('school')">
+              <input type="radio" name="taskCategory" value="school" />
+              <span class="cat-dot dot-school"></span>
+              <div>
+                <strong>青色：学校 / 配合他组</strong>
+                <small>学校活动 / HEM / Koko / PPD</small>
+              </div>
+            </label>
+            <label class="cat-option cat-opt-personal" onclick="selectModalCategory('personal')">
+              <input type="radio" name="taskCategory" value="personal" />
+              <span class="cat-dot dot-personal"></span>
+              <div>
+                <strong>紫色：个人事务</strong>
+                <small>Peribadi / 无关工作</small>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- 2. 选择行动属性 (Action Type) -->
+        <div class="form-group">
+          <label class="form-label">2. 性质（是我自己做，还是交代老师做？）</label>
+          <div class="action-type-selector">
+            <button type="button" class="act-btn active" data-act="my_prep" onclick="selectModalActionType('my_prep')">
+              👤 我需准备 / 我需配合完成
+            </button>
+            <button type="button" class="act-btn" data-act="delegate" onclick="selectModalActionType('delegate')">
+              👥 交代老师做 / 待老师提交
+            </button>
+            <button type="button" class="act-btn" data-act="event" onclick="selectModalActionType('event')">
+              📌 会议 / 活动行程
+            </button>
+          </div>
+        </div>
+
+        <!-- 3. 标题与日期时间 -->
+        <div class="form-group">
+          <label class="form-label" for="taskTitleInput">3. 事项名称 / 内容 *</label>
+          <input type="text" id="taskTitleInput" class="form-input" placeholder="例如：收集各科 Panitia 年终报告 / 准备校务会议 PPT" required />
+        </div>
+
+        <div class="form-row-3">
+          <div class="form-group">
+            <label class="form-label" for="taskDateInput">日期 *</label>
+            <input type="date" id="taskDateInput" class="form-input" required />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="taskTimeInput">时间 (选填)</label>
+            <input type="time" id="taskTimeInput" class="form-input" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="taskPrepDaysInput">提前几天提醒准备</label>
+            <select id="taskPrepDaysInput" class="form-input">
+              <option value="0">当天提醒</option>
+              <option value="1">提前 1 天</option>
+              <option value="2">提前 2 天</option>
+              <option value="3">提前 3 天</option>
+              <option value="5">提前 5 天</option>
+              <option value="7">提前 1 周 (7天)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 4. 负责对象 / 配合单位 & 状态 -->
+        <div class="form-row-2">
+          <div class="form-group">
+            <label class="form-label" for="taskAssigneeInput" id="assigneeLabel">负责老师 / 科委 / 配合部门</label>
+            <input type="text" id="taskAssigneeInput" class="form-input" placeholder="例：全体 Ketua Panitia / 配合 GPK HEM" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="taskStatusInput">目前状态</label>
+            <select id="taskStatusInput" class="form-input">
+              <option value="pending">⏳ 待处理 / 未收齐</option>
+              <option value="in_progress">🔄 进行中 / 部分已交</option>
+              <option value="done">✅ 已完成 / 已全部收齐</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 5. 备注 / 跟进名单 -->
+        <div class="form-group">
+          <label class="form-label" for="taskNotesInput">详细备注 / 准备清单 / 未交老师记录</label>
+          <textarea id="taskNotesInput" class="form-textarea" rows="3" placeholder="可记录需要准备的细节，或记录哪位老师还没交..."></textarea>
+        </div>
+
+        <!-- 6. 上传工作表 / 文件附件 (直存 Google Drive 或粘贴 Drive 链接) -->
+        <div class="form-group attachment-section">
+          <label class="form-label">📎 附加工作表 (Excel) / 公文 (PDF) / Google Drive 链接</label>
+          <div class="attachment-actions">
+            <input type="file" id="taskFileInput" multiple onchange="handleTaskModalFileSelect(event)" style="display:none" />
+            <button type="button" class="btn-attach" onclick="document.getElementById('taskFileInput').click()">
+              📤 上传文件 (自动存入 Google Drive)
+            </button>
+            <button type="button" class="btn-attach" onclick="toggleQuickLinkInputs()">
+              🔗 粘贴 Google Sheet / Drive 链接
+            </button>
+          </div>
+
+          <!-- 粘贴云端链接子面板 -->
+          <div id="quickLinkInputBox" class="quick-link-box" style="display:none;">
+            <input type="text" id="attachLinkName" class="form-input" placeholder="文件/工作表名称（如：2026 PBD成绩总表）" />
+            <input type="url" id="attachLinkUrl" class="form-input" placeholder="粘贴 Google Sheet 或 Google Drive 链接 (https://...)" />
+            <button type="button" class="btn-primary-sm" onclick="addLinkAttachmentToModal()">添加链接</button>
+          </div>
+
+          <div id="uploadProgressBar" class="upload-progress" style="display:none;">
+            ⏳ 正在上传文件至您的 Google Drive...
+          </div>
+
+          <!-- 当前事项已附加的文件列表 -->
+          <div id="modalAttachmentsList" class="modal-attachments-list"></div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn-danger-outline" id="deleteTaskBtn" onclick="deleteTaskFromModal()" style="display:none;">🗑️ 删除</button>
+        <div class="modal-footer-right">
+          <button type="button" class="btn-outline" onclick="closeTaskModal()">取消</button>
+          <button type="button" class="btn-primary" onclick="saveTaskFromModal()">💾 保存事项</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 弹窗 2：Excel / CSV 工作表批量导入 Modal ==================== -->
+  <div class="modal-overlay" id="importModalOverlay" onclick="closeModalOnBg(event, 'importModalOverlay')">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <h3>📥 从 Excel / CSV 工作表批量导入日程</h3>
+        <button class="btn-close" onclick="closeWorksheetImportModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="card-subtext">
+          上传您的 Excel (<code>.xlsx</code> / <code>.xls</code>) 或 <code>.csv</code> 工作表。系统会自动识别表中的<strong>日期 (Date/Tarikh)</strong>、<strong>事项名称 (Title/Perkara/Program)</strong>、<strong>领域分类 (Category/Bidang)</strong> 与 <strong>负责对象 (Assignee/Tindakan)</strong>。
+        </p>
+
+        <div class="import-dropzone" onclick="document.getElementById('excelImportInput').click()">
+          <div class="dropzone-icon">📊</div>
+          <p><strong>点击选择 Excel (.xlsx) 或 CSV 工作表文件</strong></p>
+          <small>不确定格式？可先点击下方“下载标准导入模板”</small>
+          <input type="file" id="excelImportInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleExcelImportFile(event)" />
+        </div>
+
+        <div class="form-group" style="margin-top:12px;">
+          <label class="form-label">若工作表内未注明分类，默认归入哪个颜色？</label>
+          <select id="importDefaultCategory" class="form-input">
+            <option value="bidang">🔵 蓝色 — 我的 Bidang (Pentadbiran & Kurikulum)</option>
+            <option value="school">🟢 青色 — 学校事务 / 配合其他 Bidang</option>
+            <option value="personal">🟣 紫色 — 个人事务</option>
+          </select>
+        </div>
+
+        <div id="importPreviewBox" style="display:none; margin-top:14px;">
+          <h4>预览识别到的日程 (<span id="importPreviewCount">0</span> 条)：</h4>
+          <div id="importPreviewList" class="import-preview-list"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-outline" onclick="downloadTemplateExcel()">📄 下载标准模板</button>
+        <div class="modal-footer-right">
+          <button type="button" class="btn-outline" onclick="closeWorksheetImportModal()">取消</button>
+          <button type="button" class="btn-primary" id="confirmImportBtn" onclick="confirmExcelImport()" disabled>✅ 确认导入日历</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 轻提示 Toast -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="./holidays.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
