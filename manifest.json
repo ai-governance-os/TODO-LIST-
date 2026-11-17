@@ -4,8 +4,8 @@
   "description": "华小 GPK Pentadbiran 专属日历、Bidang 统筹、老师任务跟进与 Google Sheet/Drive 同步系统",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#0f172a",
-  "theme_color": "#1e3a8a",
+  "background_color": "#eef2f7",
+  "theme_color": "#eef2f7",
   "orientation": "portrait-primary",
   "icons": [
     {

@@ -1,5 +1,5 @@
 // ============================================================================
-// 华小 GPK Pentadbiran 专属日程与统筹系统 (PWA + Google Sheet & Drive 云端同步)
+// 华小 GPK Pentadbiran · 商业级 3D 极简日程与统筹系统 (PWA + Google Sheet & Drive)
 // ============================================================================
 
 const STORAGE_KEYS = {
@@ -12,30 +12,48 @@ const STORAGE_KEYS = {
 
 const state = {
   currentYear: new Date().getFullYear(),
-  currentMonth: new Date().getMonth(), // 0-11
+  currentMonth: new Date().getMonth(),
   selectedDate: formatDateYMD(new Date()),
-  categoryFilter: 'all', // 'all' | 'bidang' | 'school' | 'personal' | 'delegate'
-  boardStatusFilter: 'active', // 'active' | 'done' | 'all'
+  categoryFilter: 'all',
+  boardStatusFilter: 'active',
   activeTab: 'calendar',
   tasks: [],
   customHolidays: [],
   standaloneFiles: [],
   gasUrl: '',
   sheetUrl: '',
+  // 内联1步录入状态
+  inlineCategory: 'bidang',
+  inlineActionType: 'my_prep',
+  // 弹窗状态
   modalAttachments: [],
   modalCategory: 'bidang',
   modalActionType: 'my_prep',
   pendingExcelRows: []
 };
 
-// 初始化入口
 document.addEventListener('DOMContentLoaded', () => {
   loadLocalData();
   initDefaultDates();
   renderAll();
   registerServiceWorker();
 
-  // 如果已配置 Google Sheet Web App URL，启动时自动静默拉取最新云端数据
+  // 键盘快捷键：Esc 关闭弹窗，弹窗标题栏回车直接保存
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeTaskModal();
+      closeWorksheetImportModal();
+    }
+  });
+
+  const modalTitleInput = document.getElementById('taskTitleInput');
+  modalTitleInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveTaskFromModal();
+    }
+  });
+
   if (state.gasUrl) {
     pullFromGoogleSheet(true);
   }
@@ -109,21 +127,21 @@ function renderAll() {
   renderHolidayManageList();
 }
 
-// ==================== 顶部筛选与底部 Tab 切换 ====================
+// ==================== 视图切换 (桌面分段胶囊 + 手机底部悬浮 Dock) ====================
 function switchTab(tabName) {
   state.activeTab = tabName;
   document.querySelectorAll('.tab-view').forEach((el) => el.classList.remove('active'));
   const target = document.getElementById(`tab-${tabName}`);
   if (target) target.classList.add('active');
 
-  document.querySelectorAll('.bottom-nav .nav-item').forEach((btn) => {
+  document.querySelectorAll('.desktop-segmented-nav .seg-nav-btn, .mobile-glass-dock .dock-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.tab === tabName);
   });
 }
 
 function setCategoryFilter(filter) {
   state.categoryFilter = filter;
-  document.querySelectorAll('.filter-bar .filter-chip').forEach((chip) => {
+  document.querySelectorAll('.filter-pills .f-pill').forEach((chip) => {
     chip.classList.toggle('active', chip.dataset.filter === filter);
   });
   renderCalendar();
@@ -153,6 +171,7 @@ function updateCountsAndBadges() {
   setText('count-personal', countPersonal);
   setText('count-delegate', countDelegate);
   setText('navPendingBadge', countAll);
+  setText('deskPendingBadge', countAll);
 }
 
 function setText(id, val) {
@@ -174,7 +193,7 @@ function getHolidaysForDate(dateStr) {
   });
 }
 
-// ==================== 多色日历核心渲染 ====================
+// ==================== 立体月历核心渲染 ====================
 function changeMonth(delta) {
   state.currentMonth += delta;
   if (state.currentMonth < 0) {
@@ -212,12 +231,12 @@ function renderCalendar() {
   grid.innerHTML = '';
 
   const firstDayOfMonth = new Date(year, month, 1);
-  const startDayOfWeek = firstDayOfMonth.getDay(); // 0 (Sun) - 6 (Sat)
+  const startDayOfWeek = firstDayOfMonth.getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const prevMonthDays = new Date(year, month, 0).getDate();
 
   const todayStr = formatDateYMD(new Date());
-  const totalCells = 42; // 6行 x 7列
+  const totalCells = 42;
 
   for (let i = 0; i < totalCells; i++) {
     let cellYear = year;
@@ -251,7 +270,6 @@ function renderCalendar() {
       .filter((t) => t.date === dateStr && filterTaskByCurrentMode(t))
       .sort((a, b) => (a.time || '23:59').localeCompare(b.time || '23:59'));
 
-    // 检查当天存在哪些颜色分类（用于实现“同日多色同时显示”）
     const hasBidang = dayTasks.some((t) => t.category === 'bidang');
     const hasSchool = dayTasks.some((t) => t.category === 'school');
     const hasPersonal = dayTasks.some((t) => t.category === 'personal');
@@ -270,21 +288,20 @@ function renderCalendar() {
       cell.classList.add('is-school-holiday');
     }
 
-    // 1. 顶部同日多色条 (当该日期有事项时，每个出现的颜色平分顶部彩条)
+    // 顶部同日多色微光条
     let multiBarHtml = '<div class="day-multi-bar">';
-    if (hasBidang) multiBarHtml += '<span class="day-multi-segment seg-bidang" title="我的 Bidang (蓝)"></span>';
-    if (hasSchool) multiBarHtml += '<span class="day-multi-segment seg-school" title="学校/配合其他 Bidang (青)"></span>';
-    if (hasPersonal) multiBarHtml += '<span class="day-multi-segment seg-personal" title="个人事务 (紫)"></span>';
+    if (hasBidang) multiBarHtml += '<span class="day-multi-segment seg-bidang"></span>';
+    if (hasSchool) multiBarHtml += '<span class="day-multi-segment seg-school"></span>';
+    if (hasPersonal) multiBarHtml += '<span class="day-multi-segment seg-personal"></span>';
     multiBarHtml += '</div>';
 
-    // 2. 日期数字 + 右侧多色圆点簇
+    // 同日多色发光珠
     let dotsHtml = '<div class="cal-day-dots">';
     if (hasBidang) dotsHtml += '<span class="cal-dot dot-bidang"></span>';
     if (hasSchool) dotsHtml += '<span class="cal-dot dot-school"></span>';
     if (hasPersonal) dotsHtml += '<span class="cal-dot dot-personal"></span>';
     dotsHtml += '</div>';
 
-    // 3. 假期微章
     let holidayHtml = '';
     if (dayHolidays.length > 0) {
       const topHol = dayHolidays[0];
@@ -292,19 +309,17 @@ function renderCalendar() {
       holidayHtml = `<div class="cal-holiday-tag ${holClass}" title="${escapeHtml(topHol.title)}">${escapeHtml(topHol.title)}</div>`;
     }
 
-    // 4. 事项微胶囊（确保同日不同颜色优先各展示一条或按顺序展示）
     let pillsHtml = '<div class="cal-events-mini">';
     const maxPills = dayHolidays.length > 0 ? 2 : 3;
     const visibleTasks = pickRepresentativeTasksForCell(dayTasks, maxPills);
 
     visibleTasks.forEach((t) => {
-      const icon = t.actionType === 'delegate' ? '👥' : (t.actionType === 'my_prep' ? '👤' : '📌');
       const doneClass = t.status === 'done' ? 'is-done' : '';
-      pillsHtml += `<div class="cal-pill pill-${t.category} ${doneClass}" title="${escapeHtml(t.title)}">${icon} ${escapeHtml(t.title)}</div>`;
+      pillsHtml += `<div class="cal-pill pill-${t.category} ${doneClass}" title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</div>`;
     });
 
     if (dayTasks.length > visibleTasks.length) {
-      pillsHtml += `<div class="cal-more-count">+${dayTasks.length - visibleTasks.length} 项</div>`;
+      pillsHtml += `<div class="cal-more-count">+${dayTasks.length - visibleTasks.length}</div>`;
     }
     pillsHtml += '</div>';
 
@@ -323,12 +338,10 @@ function renderCalendar() {
   }
 }
 
-// 当同一天有多种颜色事项时，优先让每种颜色至少露出一项在日历格子里
 function pickRepresentativeTasksForCell(tasks, limit) {
   if (tasks.length <= limit) return tasks;
   const picked = [];
-  const categories = ['bidang', 'school', 'personal'];
-  categories.forEach((cat) => {
+  ['bidang', 'school', 'personal'].forEach((cat) => {
     if (picked.length < limit) {
       const found = tasks.find((t) => t.category === cat && !picked.includes(t));
       if (found) picked.push(found);
@@ -341,21 +354,107 @@ function pickRepresentativeTasksForCell(tasks, limit) {
   return picked;
 }
 
-// ==================== 右侧：选中日期的多色详情与附件 ====================
+// ==================== 1步极简内联快速录入 (Things 3 / Fantastical 风格) ====================
+function setInlineCategory(cat) {
+  state.inlineCategory = cat;
+  document.querySelectorAll('.qc-cat-group .qc-cat').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.cat === cat);
+  });
+}
+
+function toggleInlineRole() {
+  state.inlineActionType = state.inlineActionType === 'my_prep' ? 'delegate' : 'my_prep';
+  const btn = document.getElementById('inlineRoleToggle');
+  const txt = document.getElementById('inlineRoleText');
+  const isDel = state.inlineActionType === 'delegate';
+  btn?.classList.toggle('is-delegate', isDel);
+  if (txt) txt.textContent = isDel ? '👥 交代老师' : '👤 我做';
+}
+
+function handleInlineQuickKey(event) {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    submitInlineQuickTask();
+  }
+}
+
+function parseQuickText(raw) {
+  let text = raw.trim();
+  let time = '';
+  // 提取开头或中间的 HH:MM 时间，例如 "14:00 课程会议"
+  const timeMatch = text.match(/(?:^|\s)(\d{1,2}:\d{2})(?:\s|$)/);
+  if (timeMatch) {
+    const [hh, mm] = timeMatch[1].split(':');
+    if (Number(hh) < 24 && Number(mm) < 60) {
+      time = `${hh.padStart(2, '0')}:${mm}`;
+      text = text.replace(timeMatch[0], ' ').trim();
+    }
+  }
+  return { title: text, time };
+}
+
+function submitInlineQuickTask() {
+  const input = document.getElementById('inlineQuickInput');
+  const raw = input?.value.trim();
+  if (!raw) {
+    input?.focus();
+    return;
+  }
+
+  const { title, time } = parseQuickText(raw);
+  const newTask = {
+    id: 'task-' + Date.now(),
+    title: title || raw,
+    date: state.selectedDate,
+    time,
+    category: state.inlineCategory,
+    actionType: state.inlineActionType,
+    assignee: '',
+    status: 'pending',
+    priority: 'normal',
+    prepDays: 0,
+    notes: '',
+    attachments: []
+  };
+
+  state.tasks.push(newTask);
+  input.value = '';
+  saveLocalTasks();
+  renderAll();
+  showToast('已记入 ' + state.selectedDate);
+  syncToGoogleSheetBackground();
+}
+
+function openTaskModalWithDraft() {
+  const draft = document.getElementById('inlineQuickInput')?.value.trim() || '';
+  openTaskModal(null, state.selectedDate, state.inlineCategory, state.inlineActionType);
+  if (draft) {
+    const { title, time } = parseQuickText(draft);
+    document.getElementById('taskTitleInput').value = title;
+    if (time) document.getElementById('taskTimeInput').value = time;
+    document.getElementById('inlineQuickInput').value = '';
+  }
+  // 直接展开细节面板，方便用户填时间/备注/传工作表
+  const drawer = document.getElementById('modalDetailsDrawer');
+  if (drawer && drawer.style.display === 'none') {
+    toggleModalDetails();
+  }
+}
+
+// ==================== 右侧：选中日期详情 ====================
 function renderSelectedDayDetails() {
   const dateStr = state.selectedDate;
   const dateObj = new Date(dateStr + 'T00:00:00');
-  const weekdays = ['星期日 Ahad', '星期一 Isnin', '星期二 Selasa', '星期三 Rabu', '星期四 Khamis', '星期五 Jumaat', '星期六 Sabtu'];
+  const weekdays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
   const dayName = weekdays[dateObj.getDay()] || '';
 
-  setText('selectedDateBadge', `${dateStr} (${dayName})`);
+  setText('selectedDateBadge', `${dateStr} · ${dayName}`);
 
   const holidays = getHolidaysForDate(dateStr);
   const dayTasks = state.tasks
     .filter((t) => t.date === dateStr && filterTaskByCurrentMode(t))
     .sort((a, b) => (a.time || '23:59').localeCompare(b.time || '23:59'));
 
-  // 1. 渲染同日多色统计条
   const summaryEl = document.getElementById('selectedDayColorSummary');
   if (summaryEl) {
     const bCount = dayTasks.filter((t) => t.category === 'bidang').length;
@@ -363,35 +462,30 @@ function renderSelectedDayDetails() {
     const pCount = dayTasks.filter((t) => t.category === 'personal').length;
 
     let sumHtml = '';
-    if (bCount > 0) sumHtml += `<span class="summary-pill bidang">🔵 我的 Bidang: ${bCount} 项</span>`;
-    if (sCount > 0) sumHtml += `<span class="summary-pill school">🟢 学校/配合: ${sCount} 项</span>`;
-    if (pCount > 0) sumHtml += `<span class="summary-pill personal">🟣 个人: ${pCount} 项</span>`;
-    if (!sumHtml) {
-      sumHtml = `<span style="font-size:12px;color:#64748b;">此日暂无记录，点击右上角【＋ 加在此日】即可添加。</span>`;
-    }
+    if (bCount > 0) sumHtml += `<span class="summary-pill bidang"><i class="jewel jewel-bidang"></i>${bCount}</span>`;
+    if (sCount > 0) sumHtml += `<span class="summary-pill school"><i class="jewel jewel-school"></i>${sCount}</span>`;
+    if (pCount > 0) sumHtml += `<span class="summary-pill personal"><i class="jewel jewel-personal"></i>${pCount}</span>`;
     summaryEl.innerHTML = sumHtml;
   }
 
-  // 2. 渲染当日假期横幅
   const holEl = document.getElementById('selectedDayHolidays');
   if (holEl) {
     holEl.innerHTML = holidays
       .map((h) => {
-        const label = h.type === 'public' ? '🇲🇾 公共假期' : (h.type === 'peristiwa' ? '🏫 学校特假' : '🎒 学校假期');
+        const label = h.type === 'public' ? '公共假期' : (h.type === 'peristiwa' ? '学校特假' : '学校假期');
         return `<div class="holiday-banner ${h.type}">
-          <span>${label}：${escapeHtml(h.title)}</span>
-          <small>${h.date}${h.endDate && h.endDate !== h.date ? ' 至 ' + h.endDate : ''}</small>
+          <span>${label} · ${escapeHtml(h.title)}</span>
+          <small>${h.date}${h.endDate && h.endDate !== h.date ? ' ~ ' + h.endDate : ''}</small>
         </div>`;
       })
       .join('');
   }
 
-  // 3. 渲染当日事项卡片
   const listEl = document.getElementById('selectedDayTasks');
   if (!listEl) return;
 
   if (dayTasks.length === 0) {
-    listEl.innerHTML = '';
+    listEl.innerHTML = `<div style="text-align:center;padding:24px 10px;color:#94a3b8;font-size:12.5px;">这一天暂无事项，直接在上方输入框记一事吧。</div>`;
     return;
   }
 
@@ -400,27 +494,22 @@ function renderSelectedDayDetails() {
 
 function buildTaskCardHtml(t, showDateBadge = true) {
   const catLabelMap = {
-    bidang: '🔵 我的 Bidang',
-    school: '🟢 学校/配合他组',
-    personal: '🟣 个人 Peribadi'
+    bidang: '我的 Bidang',
+    school: '配合/学校',
+    personal: '个人'
   };
   const actionLabelMap = {
-    my_prep: t.category === 'school' ? '👤 我需配合/完成' : '👤 我需准备/处理',
-    delegate: '👥 交代老师/待收齐',
-    event: '📌 行程/会议'
-  };
-  const statusLabelMap = {
-    pending: '⏳ 待处理',
-    in_progress: '🔄 进行中/部分已交',
-    done: '✅ 已完成'
+    my_prep: t.category === 'school' ? '我需配合' : '我需准备',
+    delegate: '交代老师',
+    event: '行程'
   };
 
   const attachmentsHtml = (t.attachments || [])
-    .map((att, idx) => {
-      const icon = getFileIcon(att.name || att.type);
+    .map((att) => {
       const href = att.url || att.dataUrl || '#';
       return `<a class="attach-chip" href="${href}" target="_blank" rel="noopener noreferrer" download="${att.dataUrl ? escapeHtml(att.name) : ''}">
-        ${icon} ${escapeHtml(att.name || '查看附件')}
+        <svg class="ico-xs" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        ${escapeHtml(att.name || '附件')}
       </a>`;
     })
     .join('');
@@ -431,17 +520,19 @@ function buildTaskCardHtml(t, showDateBadge = true) {
         <div class="task-check-wrap">
           <input type="checkbox" class="task-checkbox" ${t.status === 'done' ? 'checked' : ''} onchange="toggleTaskDone('${t.id}', this.checked)" />
           <div style="flex:1;" onclick="openTaskModal('${t.id}')">
-            <div class="task-title">${t.time ? `<span style="color:#2563eb">[${t.time}]</span> ` : ''}${escapeHtml(t.title)}</div>
+            <div class="task-title">${t.time ? `<span style="color:#2563eb;font-variant-numeric:tabular-nums;margin-right:5px;">${t.time}</span>` : ''}${escapeHtml(t.title)}</div>
             <div class="task-badges">
-              ${showDateBadge ? `<span class="tag tag-action">📅 ${t.date}</span>` : ''}
+              ${showDateBadge ? `<span class="tag tag-action">${t.date}</span>` : ''}
               <span class="tag tag-${t.category}">${catLabelMap[t.category] || '事项'}</span>
               <span class="tag tag-action">${actionLabelMap[t.actionType] || ''}</span>
-              ${t.assignee ? `<span class="tag tag-assignee">🎯 ${escapeHtml(t.assignee)}</span>` : ''}
-              ${t.status === 'in_progress' ? `<span class="tag tag-status-in_progress">${statusLabelMap[t.status]}</span>` : ''}
+              ${t.assignee ? `<span class="tag tag-assignee">${escapeHtml(t.assignee)}</span>` : ''}
+              ${t.status === 'in_progress' ? `<span class="tag tag-status-in_progress">进行中</span>` : ''}
             </div>
           </div>
         </div>
-        <button class="btn-col-add" onclick="openTaskModal('${t.id}')" title="编辑事项">✎</button>
+        <button class="btn-icon-soft" style="width:28px;height:28px;" onclick="openTaskModal('${t.id}')" title="编辑">
+          <svg class="ico-xs" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+        </button>
       </div>
       ${t.notes ? `<div class="task-notes">${escapeHtml(t.notes)}</div>` : ''}
       ${attachmentsHtml ? `<div class="task-attachments">${attachmentsHtml}</div>` : ''}
@@ -449,7 +540,7 @@ function buildTaskCardHtml(t, showDateBadge = true) {
   `;
 }
 
-// ==================== 近期筹备雷达 (Countdown Reminder) ====================
+// ==================== 近期筹备雷达 ====================
 function renderPrepRadar() {
   const radarEl = document.getElementById('prepRadarList');
   if (!radarEl) return;
@@ -465,40 +556,40 @@ function renderPrepRadar() {
       return { ...t, diffDays };
     })
     .filter((t) => {
-      // 距离截止在 0~10 天内，或者设置了提前准备天数且已进入准备期
       const prepWindow = Math.max(Number(t.prepDays) || 2, 5);
       return t.diffDays >= -3 && t.diffDays <= prepWindow;
     })
     .sort((a, b) => a.diffDays - b.diffDays);
 
   if (upcoming.length === 0) {
-    radarEl.innerHTML = `<div style="font-size:12px;color:#64748b;">近期无紧急倒数事项 👍</div>`;
+    radarEl.innerHTML = `<div style="font-size:12px;color:#94a3b8;">近期无紧迫倒数事项</div>`;
     return;
   }
 
   radarEl.innerHTML = upcoming
-    .slice(0, 6)
+    .slice(0, 5)
     .map((t) => {
       let badge = '';
-      if (t.diffDays < 0) badge = `<strong style="color:#dc2626">已逾期 ${Math.abs(t.diffDays)} 天</strong>`;
-      else if (t.diffDays === 0) badge = `<strong style="color:#dc2626">就是今天！</strong>`;
-      else badge = `<strong style="color:#b45309">还有 ${t.diffDays} 天 (${t.date})</strong>`;
+      if (t.diffDays < 0) badge = `<strong style="color:#e11d48">逾期 ${Math.abs(t.diffDays)} 天</strong>`;
+      else if (t.diffDays === 0) badge = `<strong style="color:#e11d48">今天</strong>`;
+      else badge = `<strong style="color:#b45309">${t.diffDays} 天后</strong>`;
 
-      const dotColor = t.category === 'bidang' ? '🔵' : (t.category === 'school' ? '🟢' : '🟣');
-      const roleTag = t.actionType === 'delegate' ? '👥催交老师' : '👤我需准备';
-
+      const jewelClass = t.category === 'bidang' ? 'jewel-bidang' : (t.category === 'school' ? 'jewel-school' : 'jewel-personal');
       return `<div class="radar-item" onclick="selectDate('${t.date}')">
-        <span>${dotColor} [${roleTag}] ${escapeHtml(t.title)}</span>
-        <span>${badge}</span>
+        <span style="display:flex;align-items:center;gap:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+          <i class="jewel ${jewelClass}"></i>
+          <span style="overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}</span>
+        </span>
+        <span style="flex-shrink:0;">${badge}</span>
       </div>`;
     })
     .join('');
 }
 
-// ==================== TAB 2: 四分栏 Bidang 统筹看板 ====================
+// ==================== 统筹看板 ====================
 function setBoardStatusFilter(status) {
   state.boardStatusFilter = status;
-  document.querySelectorAll('.board-status-tabs .status-pill').forEach((btn) => {
+  document.querySelectorAll('.segmented-mini .seg-mini').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.status === status);
   });
   renderBoard();
@@ -520,33 +611,37 @@ function renderBoard() {
     })
     .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 
-  // 分入四个专属栏目：
-  // 1. 我的 Bidang — 我自己准备/行程 (bidang + non-delegate)
-  const bidangMy = filtered.filter((t) => t.category === 'bidang' && t.actionType !== 'delegate');
-  // 2. 我的 Bidang — 交代老师做/跟进收齐 (bidang + delegate)
-  const bidangDelegate = filtered.filter((t) => t.category === 'bidang' && t.actionType === 'delegate');
-  // 3. 青色：学校事务 / 配合其他 Bidang
-  const schoolAll = filtered.filter((t) => t.category === 'school');
-  // 4. 紫色：个人事务
-  const personalAll = filtered.filter((t) => t.category === 'personal');
-
-  renderColumnList('col-bidang-my', bidangMy, '暂无待准备的 Bidang 事项');
-  renderColumnList('col-bidang-delegate', bidangDelegate, '暂无待老师提交的事项');
-  renderColumnList('col-school-all', schoolAll, '暂无学校或配合其他 Bidang 事项');
-  renderColumnList('col-personal-all', personalAll, '暂无个人行程记录');
+  renderColumnList('col-bidang-my', filtered.filter((t) => t.category === 'bidang' && t.actionType !== 'delegate'), '暂无待准备事项');
+  renderColumnList('col-bidang-delegate', filtered.filter((t) => t.category === 'bidang' && t.actionType === 'delegate'), '暂无待老师提交事项');
+  renderColumnList('col-school-all', filtered.filter((t) => t.category === 'school'), '暂无配合事项');
+  renderColumnList('col-personal-all', filtered.filter((t) => t.category === 'personal'), '暂无个人行程');
 }
 
 function renderColumnList(containerId, items, emptyText) {
   const el = document.getElementById(containerId);
   if (!el) return;
   if (items.length === 0) {
-    el.innerHTML = `<div style="font-size:12px;color:#94a3b8;padding:12px 0;text-align:center;">${emptyText}</div>`;
+    el.innerHTML = `<div style="font-size:12px;color:#94a3b8;padding:18px 0;text-align:center;">${emptyText}</div>`;
     return;
   }
   el.innerHTML = items.map((t) => buildTaskCardHtml(t, true)).join('');
 }
 
-// ==================== 新增 / 编辑事项 Modal 控制 ====================
+// ==================== 极简弹窗 + 渐进式展开 ====================
+function toggleTemplateBar() {
+  const el = document.getElementById('templateDrawer');
+  if (el) el.style.display = el.style.display === 'none' ? 'flex' : 'none';
+}
+
+function toggleModalDetails(forceOpen = null) {
+  const drawer = document.getElementById('modalDetailsDrawer');
+  const text = document.getElementById('toggleDetailsText');
+  if (!drawer) return;
+  const shouldOpen = forceOpen !== null ? forceOpen : drawer.style.display === 'none';
+  drawer.style.display = shouldOpen ? 'block' : 'none';
+  if (text) text.textContent = shouldOpen ? '收起细节栏' : '补充时间、老师、备注或上传工作表';
+}
+
 function openQuickCategoryModal(category, actionType) {
   openTaskModal(null, state.selectedDate, category, actionType);
 }
@@ -556,12 +651,12 @@ function openTaskModal(taskId = null, defaultDate = null, defaultCat = 'bidang',
   if (!modal) return;
 
   const deleteBtn = document.getElementById('deleteTaskBtn');
-  document.getElementById('quickLinkInputBox').style.display = 'none';
+  document.getElementById('templateDrawer').style.display = 'none';
 
   if (taskId) {
     const task = state.tasks.find((t) => t.id === taskId);
     if (!task) return;
-    setText('taskModalTitle', '编辑事项 / 跟进状态');
+    setText('taskModalTitle', '编辑事项');
     document.getElementById('taskIdInput').value = task.id;
     document.getElementById('taskTitleInput').value = task.title || '';
     document.getElementById('taskDateInput').value = task.date || state.selectedDate;
@@ -573,9 +668,12 @@ function openTaskModal(taskId = null, defaultDate = null, defaultCat = 'bidang',
     state.modalAttachments = JSON.parse(JSON.stringify(task.attachments || []));
     selectModalCategory(task.category || 'bidang');
     selectModalActionType(task.actionType || 'my_prep');
-    if (deleteBtn) deleteBtn.style.display = 'inline-flex';
+    if (deleteBtn) deleteBtn.style.display = 'inline-block';
+
+    const hasExtra = !!(task.time || task.assignee || task.notes || task.prepDays > 0 || task.status !== 'pending');
+    toggleModalDetails(hasExtra);
   } else {
-    setText('taskModalTitle', '新增日程 / 任务');
+    setText('taskModalTitle', '记一事');
     document.getElementById('taskIdInput').value = '';
     document.getElementById('taskTitleInput').value = '';
     document.getElementById('taskDateInput').value = defaultDate || state.selectedDate;
@@ -588,10 +686,12 @@ function openTaskModal(taskId = null, defaultDate = null, defaultCat = 'bidang',
     selectModalCategory(defaultCat);
     selectModalActionType(defaultAct);
     if (deleteBtn) deleteBtn.style.display = 'none';
+    toggleModalDetails(false);
   }
 
   renderModalAttachments();
   modal.classList.add('open');
+  setTimeout(() => document.getElementById('taskTitleInput')?.focus(), 60);
 }
 
 function closeTaskModal() {
@@ -606,7 +706,7 @@ function closeModalOnBg(event, overlayId) {
 
 function selectModalCategory(cat) {
   state.modalCategory = cat;
-  document.querySelectorAll('#categorySelector .cat-option').forEach((el) => {
+  document.querySelectorAll('#categorySelector .c-pill').forEach((el) => {
     const input = el.querySelector('input');
     const isMatch = input && input.value === cat;
     el.classList.toggle('active', isMatch);
@@ -616,66 +716,55 @@ function selectModalCategory(cat) {
 
 function selectModalActionType(act) {
   state.modalActionType = act;
-  document.querySelectorAll('.action-type-selector .act-btn').forEach((btn) => {
+  document.querySelectorAll('.action-seg-3d .act-seg').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.act === act);
   });
 
   const assigneeLabel = document.getElementById('assigneeLabel');
   const assigneeInput = document.getElementById('taskAssigneeInput');
   if (act === 'delegate') {
-    if (assigneeLabel) assigneeLabel.textContent = '👥 交代哪位老师 / 哪个 Panitia 负责？';
-    if (assigneeInput) assigneeInput.placeholder = '例：全体 Ketua Panitia / 4年级科任老师 / 某某老师';
+    if (assigneeLabel) assigneeLabel.textContent = '交代哪位老师 / Panitia';
+    if (assigneeInput) assigneeInput.placeholder = '例如：全体 Ketua Panitia / 4年级科任';
   } else if (state.modalCategory === 'school') {
-    if (assigneeLabel) assigneeLabel.textContent = '🤝 配合哪个部门 / 负责人？';
-    if (assigneeInput) assigneeInput.placeholder = '例：配合 GPK HEM / GPK Koko / 校长 / PPD';
+    if (assigneeLabel) assigneeLabel.textContent = '配合哪个部门 / 单位';
+    if (assigneeInput) assigneeInput.placeholder = '例如：配合 GPK HEM / Koko / 校长';
   } else {
-    if (assigneeLabel) assigneeLabel.textContent = '👤 负责对象 / 备注对象 (选填)';
-    if (assigneeInput) assigneeInput.placeholder = '例：GPK Pentadbiran 亲自准备';
+    if (assigneeLabel) assigneeLabel.textContent = '负责对象 (选填)';
+    if (assigneeInput) assigneeInput.placeholder = '例如：GPK Pentadbiran';
   }
 }
 
-// 华小 GPK Pentadbiran 常用快捷模板
 function applyQuickTemplate(tplKey) {
   const templates = {
     kurikulum: {
-      cat: 'bidang',
-      act: 'my_prep',
+      cat: 'bidang', act: 'my_prep',
       title: '准备 Mesyuarat Kurikulum 课程会议议程与简报',
-      assignee: 'GPK Pentadbiran',
-      prepDays: '3',
-      notes: '1. 发出 Surat Panggilan Mesyuarat\n2. 准备会议 PPT 与各科表现分析表\n3. 提醒书记录会议记录 (Minit Mesyuarat)'
+      assignee: 'GPK Pentadbiran', prepDays: '3',
+      notes: '1. 发 Surat Panggilan\n2. 准备会议 PPT 与分析表\n3. 跟进 Minit Mesyuarat'
     },
     panitia: {
-      cat: 'bidang',
-      act: 'delegate',
-      title: '各科主任 (Ketua Panitia) 提交科委报告与活动记录',
-      assignee: '全体 Ketua Panitia (华/国/英/数/科/史/艺/体)',
-      prepDays: '2',
-      notes: '待收齐科目：华文、国文、英文、数学、科学。收齐后存入 Google Drive 文件夹。'
+      cat: 'bidang', act: 'delegate',
+      title: '各科主任 (Ketua Panitia) 提交科委报告',
+      assignee: '全体 Ketua Panitia', prepDays: '2',
+      notes: '待收齐：华文、国文、英文、数学、科学。'
     },
     pbd: {
-      cat: 'bidang',
-      act: 'delegate',
-      title: '跟进全体科任老师完成 PBD / UASA 分数输入与分析',
-      assignee: '全体科任老师 (Guru Mata Pelajaran)',
-      prepDays: '3',
-      notes: '检查各班输入进度，汇整不及格或需辅导学生名单 (Intervensi / Pemulihan)。'
+      cat: 'bidang', act: 'delegate',
+      title: '跟进科任老师完成 PBD / UASA 分数输入',
+      assignee: '全体科任老师', prepDays: '3',
+      notes: '检查输入率并汇整 Intervensi 名单。'
     },
     pencerapan: {
-      cat: 'bidang',
-      act: 'my_prep',
-      title: '教学视察与作业检阅 (Pencerapan PdPc & Semakan Buku Latihan)',
-      assignee: 'GPK Pentadbiran & 科主任',
-      prepDays: '1',
-      notes: '准备好 Borang Pencerapan SKPM Kualiti@Sekolah，视察后与老师进行回馈交流。'
+      cat: 'bidang', act: 'my_prep',
+      title: '教学视察与作业检阅 (Pencerapan PdPc)',
+      assignee: 'GPK Pentadbiran', prepDays: '1',
+      notes: '准备 Borang Pencerapan SKPM。'
     },
     hem_koko: {
-      cat: 'school',
-      act: 'my_prep',
-      title: '配合学校活动 / 其他 Bidang (HEM / Koko) 协调事项',
-      assignee: '配合 GPK HEM / GPK Kokurikulum',
-      prepDays: '2',
-      notes: '协助调动当天代课表 (Jadual Relief) 及核对参与学生/负责老师名单。'
+      cat: 'school', act: 'my_prep',
+      title: '配合学校活动 / 其他 Bidang (HEM / Koko)',
+      assignee: '配合 GPK HEM / Koko', prepDays: '2',
+      notes: '协助调动代课表与核对参与老师名单。'
     }
   };
 
@@ -687,22 +776,27 @@ function applyQuickTemplate(tplKey) {
   document.getElementById('taskAssigneeInput').value = tpl.assignee;
   document.getElementById('taskPrepDaysInput').value = tpl.prepDays;
   document.getElementById('taskNotesInput').value = tpl.notes;
+  toggleModalDetails(true);
+  document.getElementById('templateDrawer').style.display = 'none';
 }
 
 function saveTaskFromModal() {
-  const title = document.getElementById('taskTitleInput').value.trim();
+  const rawTitle = document.getElementById('taskTitleInput').value.trim();
   const date = document.getElementById('taskDateInput').value;
-  if (!title || !date) {
-    showToast('⚠️ 请填写事项名称与日期');
+  if (!rawTitle || !date) {
+    showToast('请填写事项名称与日期');
     return;
   }
 
+  const parsed = parseQuickText(rawTitle);
+  const explicitTime = document.getElementById('taskTimeInput').value;
   const id = document.getElementById('taskIdInput').value || 'task-' + Date.now();
+
   const taskObj = {
     id,
-    title,
+    title: parsed.title || rawTitle,
     date,
-    time: document.getElementById('taskTimeInput').value || '',
+    time: explicitTime || parsed.time || '',
     category: state.modalCategory,
     actionType: state.modalActionType,
     assignee: document.getElementById('taskAssigneeInput').value.trim(),
@@ -724,9 +818,7 @@ function saveTaskFromModal() {
   saveLocalTasks();
   closeTaskModal();
   renderAll();
-  showToast('✅ 事项已保存');
-
-  // 若已配置 Google Sheet Web App URL，自动后台同步到云端
+  showToast('已保存');
   syncToGoogleSheetBackground();
 }
 
@@ -736,7 +828,7 @@ function toggleTaskDone(taskId, isChecked) {
   task.status = isChecked ? 'done' : 'pending';
   saveLocalTasks();
   renderAll();
-  showToast(isChecked ? '✅ 已标记为完成/收齐' : '⏳ 已恢复为待处理');
+  showToast(isChecked ? '已完成' : '已恢复待处理');
   syncToGoogleSheetBackground();
 }
 
@@ -747,39 +839,25 @@ function deleteTaskFromModal() {
   saveLocalTasks();
   closeTaskModal();
   renderAll();
-  showToast('🗑️ 事项已删除');
+  showToast('已删除');
   syncToGoogleSheetBackground();
 }
 
-// ==================== 文件上传 (直存 Google Drive) 与云端链接附件 ====================
-function toggleQuickLinkInputs() {
-  const box = document.getElementById('quickLinkInputBox');
-  if (box) {
-    box.style.display = box.style.display === 'none' ? 'grid' : 'none';
-  }
-}
-
+// ==================== 文件上传 (直存 Google Drive) ====================
 function addLinkAttachmentToModal() {
   const nameInput = document.getElementById('attachLinkName');
   const urlInput = document.getElementById('attachLinkUrl');
-  const name = nameInput.value.trim() || 'Google Drive / Sheet 链接';
+  const name = nameInput.value.trim() || 'Google Drive 链接';
   const url = urlInput.value.trim();
 
   if (!url) {
-    showToast('⚠️ 请粘贴有效的 Google Drive 或网页链接');
+    showToast('请粘贴有效链接');
     return;
   }
 
-  state.modalAttachments.push({
-    name,
-    url,
-    type: 'link',
-    size: '云端链接'
-  });
-
+  state.modalAttachments.push({ name, url, type: 'link', size: '云端链接' });
   nameInput.value = '';
   urlInput.value = '';
-  document.getElementById('quickLinkInputBox').style.display = 'none';
   renderModalAttachments();
 }
 
@@ -794,9 +872,7 @@ async function handleTaskModalFileSelect(event) {
 
   for (const file of files) {
     const uploaded = await uploadOrStoreFile(file, taskTitle);
-    if (uploaded) {
-      state.modalAttachments.push(uploaded);
-    }
+    if (uploaded) state.modalAttachments.push(uploaded);
   }
 
   if (progressEl) progressEl.style.display = 'none';
@@ -808,41 +884,40 @@ async function handleStandaloneFileUpload(event) {
   const files = Array.from(event.target.files || []);
   if (files.length === 0) return;
 
-  showToast('⏳ 正在处理并上传文件...');
+  showToast('正在上传处理…');
   for (const file of files) {
     const uploaded = await uploadOrStoreFile(file, '独立文件库');
     if (uploaded) {
       state.standaloneFiles.unshift({
         ...uploaded,
-        uploadedAt: new Date().toISOString().slice(0, 10)
+        uploadedAt: formatDateYMD(new Date())
       });
     }
   }
   saveLocalStandaloneFiles();
   event.target.value = '';
   renderFilesLibrary();
-  showToast('✅ 文件已加入工作表与文件库');
+  showToast('已存入文件库');
 }
 
 function openAddDriveLinkModal() {
-  const name = prompt('请输入工作表或文件名称（例如：2027 排课总表 Jadual Waktu）：');
+  const name = prompt('工作表或文件名称（如：2027 排课总表）：');
   if (!name) return;
-  const url = prompt('请粘贴 Google Sheet 或 Google Drive 分享链接：');
+  const url = prompt('请粘贴 Google Sheet 或 Google Drive 链接：');
   if (!url) return;
 
   state.standaloneFiles.unshift({
     name: name.trim(),
     url: url.trim(),
     type: 'link',
-    size: 'Google Drive 链接',
+    size: 'Drive 链接',
     uploadedAt: formatDateYMD(new Date())
   });
   saveLocalStandaloneFiles();
   renderFilesLibrary();
-  showToast('✅ 云端链接已保存');
+  showToast('已保存链接');
 }
 
-// 如果已配置 Google Apps Script，直接把文件上传到用户的 Google Drive 专属文件夹；否则保存在本机
 async function uploadOrStoreFile(file, taskTitle) {
   const base64DataUrl = await readFileAsDataURL(file);
   const base64Pure = base64DataUrl.split(',')[1] || '';
@@ -861,13 +936,13 @@ async function uploadOrStoreFile(file, taskTitle) {
       });
       const data = await res.json();
       if (data && data.status === 'ok' && data.fileUrl) {
-        showToast(`☁️ 已存入 Google Drive: ${file.name}`);
+        showToast(`已上传至 Google Drive: ${file.name}`);
         return {
           name: file.name,
           url: data.fileUrl,
           fileId: data.fileId,
           type: file.type,
-          size: formatBytes(file.size) + ' · Google Drive'
+          size: formatBytes(file.size) + ' · Drive'
         };
       }
     } catch (err) {
@@ -875,13 +950,12 @@ async function uploadOrStoreFile(file, taskTitle) {
     }
   }
 
-  // 本机保存模式（若文件小于 3MB 直接存 DataURL 供随时下载预览）
   return {
     name: file.name,
     dataUrl: file.size <= 3 * 1024 * 1024 ? base64DataUrl : '',
     url: '',
     type: file.type,
-    size: formatBytes(file.size) + ' · 本机附件'
+    size: formatBytes(file.size) + ' · 本机'
   };
 }
 
@@ -904,14 +978,15 @@ function renderModalAttachments() {
 
   el.innerHTML = state.modalAttachments
     .map((att, idx) => {
-      const icon = getFileIcon(att.name || att.type);
       const href = att.url || att.dataUrl || '#';
       return `
         <div class="modal-attach-item">
-          <a href="${href}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;color:#1e40af;font-weight:600;">
-            ${icon} ${escapeHtml(att.name)} <small style="color:#64748b;">(${escapeHtml(att.size || '')})</small>
+          <a href="${href}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;color:#1d4ed8;font-weight:600;">
+            ${escapeHtml(att.name)} <small style="color:#64748b;">(${escapeHtml(att.size || '')})</small>
           </a>
-          <button type="button" class="btn-close" style="width:22px;height:22px;font-size:11px;" onclick="removeModalAttachment(${idx})">✕</button>
+          <button type="button" class="btn-icon-soft" style="width:24px;height:24px;" onclick="removeModalAttachment(${idx})">
+            <svg class="ico-xs" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
         </div>
       `;
     })
@@ -928,28 +1003,16 @@ function renderFilesLibrary() {
   if (!listEl) return;
 
   const query = (document.getElementById('fileSearchInput')?.value || '').trim().toLowerCase();
-
-  // 汇总所有日程下的附件 + 独立上传的工作表/文件
   const combined = [];
 
   state.tasks.forEach((t) => {
     (t.attachments || []).forEach((att) => {
-      combined.push({
-        ...att,
-        taskTitle: t.title,
-        taskDate: t.date,
-        category: t.category
-      });
+      combined.push({ ...att, taskTitle: t.title, taskDate: t.date, category: t.category });
     });
   });
 
   state.standaloneFiles.forEach((f) => {
-    combined.push({
-      ...f,
-      taskTitle: '常用独立工作表/文件',
-      taskDate: f.uploadedAt || '',
-      category: 'bidang'
-    });
+    combined.push({ ...f, taskTitle: '常用独立工作表', taskDate: f.uploadedAt || '', category: 'bidang' });
   });
 
   const filtered = combined.filter((item) => {
@@ -957,42 +1020,33 @@ function renderFilesLibrary() {
     return `${item.name} ${item.taskTitle} ${item.taskDate}`.toLowerCase().includes(query);
   });
 
-  setText('totalFilesCount', `${filtered.length} 个文件`);
+  setText('totalFilesCount', `${filtered.length} 个已关联文件`);
 
   if (filtered.length === 0) {
-    listEl.innerHTML = `<div style="text-align:center;color:#94a3b8;padding:24px;font-size:13px;">尚无上传的工作表或附件。您可以在新增日程时上传，或点击左侧按钮直接上传。</div>`;
+    listEl.innerHTML = `<div style="text-align:center;color:#94a3b8;padding:28px;font-size:13px;">尚无文件，可随时上传工作表或贴入 Google Drive 链接。</div>`;
     return;
   }
 
   listEl.innerHTML = filtered
     .map((item) => {
-      const icon = getFileIcon(item.name || item.type);
       const href = item.url || item.dataUrl || '#';
-      const catDot = item.category === 'bidang' ? '🔵' : (item.category === 'school' ? '🟢' : '🟣');
+      const jewelClass = item.category === 'bidang' ? 'jewel-bidang' : (item.category === 'school' ? 'jewel-school' : 'jewel-personal');
       return `
         <div class="file-item-card">
-          <div>
-            <div style="font-weight:700;font-size:13px;">${icon} ${escapeHtml(item.name)}</div>
-            <div style="font-size:11px;color:#64748b;">
-              ${catDot} 关联：${escapeHtml(item.taskTitle)} ${item.taskDate ? `(${item.taskDate})` : ''} · ${escapeHtml(item.size || '')}
+          <div style="min-width:0;flex:1;">
+            <div style="font-weight:700;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(item.name)}</div>
+            <div style="font-size:11px;color:#64748b;display:flex;align-items:center;gap:6px;margin-top:2px;">
+              <i class="jewel ${jewelClass}"></i>
+              <span>${escapeHtml(item.taskTitle)} ${item.taskDate ? `· ${item.taskDate}` : ''} · ${escapeHtml(item.size || '')}</span>
             </div>
           </div>
-          <a class="btn-primary-sm" href="${href}" target="_blank" rel="noopener noreferrer" download="${item.dataUrl ? escapeHtml(item.name) : ''}" style="text-decoration:none;">
-            打开 / 查看
+          <a class="btn-soft-sm" href="${href}" target="_blank" rel="noopener noreferrer" download="${item.dataUrl ? escapeHtml(item.name) : ''}" style="text-decoration:none;">
+            打开
           </a>
         </div>
       `;
     })
     .join('');
-}
-
-function getFileIcon(nameOrType = '') {
-  const s = nameOrType.toLowerCase();
-  if (s.includes('xls') || s.includes('csv') || s.includes('sheet')) return '📊';
-  if (s.includes('pdf')) return '📕';
-  if (s.includes('doc') || s.includes('word')) return '📘';
-  if (s.includes('png') || s.includes('jpg') || s.includes('jpeg') || s.includes('image')) return '🖼️';
-  return '📎';
 }
 
 function formatBytes(bytes) {
@@ -1003,7 +1057,7 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
-// ==================== Excel / CSV 工作表批量导入与导出 ====================
+// ==================== Excel 批量导入导出 ====================
 function openWorksheetImportModal() {
   state.pendingExcelRows = [];
   document.getElementById('importPreviewBox').style.display = 'none';
@@ -1024,8 +1078,7 @@ function handleExcelImportFile(event) {
     try {
       const data = new Uint8Array(e.target.result);
       const workbook = XLSX.read(data, { type: 'array', cellDates: true });
-      const firstSheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[firstSheetName];
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
       const jsonRows = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
 
       const defaultCat = document.getElementById('importDefaultCategory')?.value || 'bidang';
@@ -1041,19 +1094,15 @@ function handleExcelImportFile(event) {
         document.getElementById('confirmImportBtn').disabled = false;
         previewList.innerHTML = parsed
           .slice(0, 30)
-          .map((t) => {
-            const dot = t.category === 'bidang' ? '🔵' : (t.category === 'school' ? '🟢' : '🟣');
-            return `<div style="padding:4px 0;border-bottom:1px solid #f1f5f9;">
-              ${dot} <strong>${t.date}</strong> — ${escapeHtml(t.title)} ${t.assignee ? `<small style="color:#c2410c;">(${escapeHtml(t.assignee)})</small>` : ''}
-            </div>`;
-          })
+          .map((t) => `<div style="padding:5px 0;border-bottom:1px solid rgba(15,23,42,0.06);">
+            <strong>${t.date}</strong> · ${escapeHtml(t.title)}
+          </div>`)
           .join('');
       } else {
-        showToast('⚠️ 未能在工作表中识别出有效日期与事项，请参考标准模板');
+        showToast('未识别到有效日期与事项，请参考标准模板');
       }
     } catch (err) {
-      console.error(err);
-      showToast('❌ 读取 Excel 工作表失败，请确认文件格式');
+      showToast('读取 Excel 文件失败');
     }
   };
   reader.readAsArrayBuffer(file);
@@ -1063,7 +1112,6 @@ function handleExcelImportFile(event) {
 function parseExcelRowsToTasks(rows, defaultCat) {
   const result = [];
   rows.forEach((row, idx) => {
-    // 智能匹配中/国/英表头
     const rawDate = row['日期'] || row['Date'] || row['Tarikh'] || row['date'] || row['tarikh'] || Object.values(row)[0];
     const rawTitle = row['事项'] || row['事项名称'] || row['活动'] || row['Title'] || row['Perkara'] || row['Program'] || row['Aktiviti'] || Object.values(row)[1];
     const rawCat = String(row['分类'] || row['领域'] || row['Category'] || row['Bidang'] || '').toLowerCase();
@@ -1110,20 +1158,12 @@ function parseExcelRowsToTasks(rows, defaultCat) {
 
 function normalizeExcelDate(val) {
   if (!val) return '';
-  if (val instanceof Date && !isNaN(val)) {
-    return formatDateYMD(val);
-  }
+  if (val instanceof Date && !isNaN(val)) return formatDateYMD(val);
   const s = String(val).trim();
-  // YYYY-MM-DD or YYYY/MM/DD
   const matchISO = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
-  if (matchISO) {
-    return `${matchISO[1]}-${matchISO[2].padStart(2, '0')}-${matchISO[3].padStart(2, '0')}`;
-  }
-  // DD/MM/YYYY or DD-MM-YYYY
+  if (matchISO) return `${matchISO[1]}-${matchISO[2].padStart(2, '0')}-${matchISO[3].padStart(2, '0')}`;
   const matchDMY = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
-  if (matchDMY) {
-    return `${matchDMY[3]}-${matchDMY[2].padStart(2, '0')}-${matchDMY[1].padStart(2, '0')}`;
-  }
+  if (matchDMY) return `${matchDMY[3]}-${matchDMY[2].padStart(2, '0')}-${matchDMY[1].padStart(2, '0')}`;
   return '';
 }
 
@@ -1133,22 +1173,19 @@ function confirmExcelImport() {
   saveLocalTasks();
   closeWorksheetImportModal();
   renderAll();
-  showToast(`✅ 成功导入 ${state.pendingExcelRows.length} 条日程！`);
+  showToast(`已导入 ${state.pendingExcelRows.length} 条日程`);
   syncToGoogleSheetBackground();
 }
 
 function exportToExcel() {
-  if (typeof XLSX === 'undefined') {
-    showToast('⚠️ Excel 组件加载中，请稍候再试');
-    return;
-  }
+  if (typeof XLSX === 'undefined') return;
   const rows = state.tasks.map((t) => ({
     '日期 (Tarikh)': t.date,
     '时间 (Masa)': t.time || '',
     '事项名称 (Perkara)': t.title,
-    '分类 (Bidang)': t.category === 'bidang' ? '我的 Bidang (蓝)' : (t.category === 'school' ? '学校/配合他组 (青)' : '个人事务 (紫)'),
-    '性质 (Jenis)': t.actionType === 'delegate' ? '交代老师做' : (t.actionType === 'my_prep' ? '我需准备/完成' : '会议/活动'),
-    '负责对象/配合部门 (Tindakan)': t.assignee || '',
+    '分类 (Bidang)': t.category === 'bidang' ? '我的 Bidang' : (t.category === 'school' ? '学校/配合他组' : '个人事务'),
+    '性质 (Jenis)': t.actionType === 'delegate' ? '交代老师做' : (t.actionType === 'my_prep' ? '我需准备' : '行程'),
+    '负责对象 (Tindakan)': t.assignee || '',
     '状态 (Status)': t.status === 'done' ? '已完成' : (t.status === 'in_progress' ? '进行中' : '待处理'),
     '备注 (Catatan)': t.notes || ''
   }));
@@ -1157,36 +1194,14 @@ function exportToExcel() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'GPK_Pentadbiran_Takwim');
   XLSX.writeFile(wb, `GPK_Pentadbiran_日程表_${formatDateYMD(new Date())}.xlsx`);
-  showToast('📤 已导出 Excel 工作表');
+  showToast('已导出 Excel 工作表');
 }
 
 function downloadTemplateExcel() {
   if (typeof XLSX === 'undefined') return;
   const sampleRows = [
-    {
-      '日期': '2026-11-25',
-      '事项名称': 'Mesyuarat Panitia Bahasa Cina Bil.4',
-      '分类': '我的 Bidang',
-      '性质': '交代老师做',
-      '负责老师': '华文科主任 Ketua Panitia BC',
-      '备注': '提交会议记录与年终检讨报告'
-    },
-    {
-      '日期': '2026-11-26',
-      '事项名称': '配合毕业典礼彩排与音响场地协调',
-      '分类': '学校/配合',
-      '性质': '我需准备',
-      '负责老师': '配合 GPK Koko',
-      '备注': '安排当天节数代课表'
-    },
-    {
-      '日期': '2026-11-28',
-      '事项名称': '家庭周末聚餐',
-      '分类': '个人',
-      '性质': '活动',
-      '负责老师': '个人',
-      '备注': ''
-    }
+    { '日期': '2026-11-25', '事项名称': 'Mesyuarat Panitia Bahasa Cina Bil.4', '分类': '我的 Bidang', '性质': '交代老师做', '负责老师': '华文科主任', '备注': '提交会议记录' },
+    { '日期': '2026-11-26', '事项名称': '配合毕业典礼彩排协调', '分类': '学校/配合', '性质': '我需准备', '负责老师': '配合 GPK Koko', '备注': '安排代课表' }
   ];
   const ws = XLSX.utils.json_to_sheet(sampleRows);
   const wb = XLSX.utils.book_new();
@@ -1194,7 +1209,7 @@ function downloadTemplateExcel() {
   XLSX.writeFile(wb, 'GPK_Takwim_导入模板.xlsx');
 }
 
-// ==================== TAB 4: Google Sheet & Drive 双向同步与假期管理 ====================
+// ==================== Google Sheet & Drive 同步 ====================
 function updateSyncStatusUI() {
   const dot = document.getElementById('syncDot');
   const text = document.getElementById('syncStatusText');
@@ -1202,17 +1217,19 @@ function updateSyncStatusUI() {
 
   if (state.gasUrl) {
     dot?.classList.add('online');
-    if (text) text.textContent = '已连 Google Drive';
+    if (text) text.textContent = 'Google Drive 已连';
     if (tag) {
-      tag.textContent = '✅ 已连接 Google Sheet & Drive';
+      tag.textContent = '已连接 Google';
       tag.style.color = '#059669';
+      tag.style.background = 'rgba(16, 185, 129, 0.12)';
     }
   } else {
     dot?.classList.remove('online');
-    if (text) text.textContent = '本机模式 (可连 Drive)';
+    if (text) text.textContent = '本机存储';
     if (tag) {
-      tag.textContent = '⚪ 未配置云端 URL (数据保存在本机)';
+      tag.textContent = '本机模式';
       tag.style.color = '#64748b';
+      tag.style.background = 'rgba(15, 23, 42, 0.06)';
     }
   }
 }
@@ -1228,21 +1245,20 @@ async function saveAndTestCloudConnection() {
   updateSyncStatusUI();
 
   if (!gasUrl) {
-    showToast('已切换回纯本机保存模式');
+    showToast('已切换回本机存储');
     return;
   }
-
   await manualCloudSync();
 }
 
 async function manualCloudSync() {
   if (!state.gasUrl) {
-    switchTab('sync');
-    showToast('💡 请先粘贴您的 Google Apps Script 网址以启用 Google Drive 同步');
+    switchTab('vault');
+    showToast('请先填入 Google Apps Script 网址');
     return;
   }
 
-  showToast('🔄 正在与您的 Google Sheet 同步...');
+  showToast('正在同步至 Google Sheet…');
   try {
     const res = await fetch(state.gasUrl, {
       method: 'POST',
@@ -1254,13 +1270,12 @@ async function manualCloudSync() {
     });
     const data = await res.json();
     if (data && data.status === 'ok') {
-      showToast('☁️ 已成功同步至您的 Google Sheet！');
+      showToast('已同步至 Google Sheet');
     } else {
-      showToast('⚠️ 同步返回异常: ' + (data?.message || ''));
+      showToast('同步返回异常: ' + (data?.message || ''));
     }
   } catch (err) {
-    console.error(err);
-    showToast('⚠️ 无法连接 Google Apps Script，请检查网址与部署权限 (Anyone)');
+    showToast('无法连接 Google Apps Script，请检查权限设置');
   }
 }
 
@@ -1276,16 +1291,16 @@ async function syncToGoogleSheetBackground() {
       })
     });
   } catch (err) {
-    console.warn('后台同步至 Google Sheet 暂缓:', err);
+    console.warn('后台同步暂缓:', err);
   }
 }
 
 async function pullFromGoogleSheet(silent = false) {
   if (!state.gasUrl) {
-    if (!silent) showToast('⚠️ 请先填写 Google Apps Script 网址');
+    if (!silent) showToast('请先配置 Google Apps Script 网址');
     return;
   }
-  if (!silent) showToast('⬇️ 正在从 Google Sheet 拉取数据...');
+  if (!silent) showToast('正在从 Google Sheet 拉取…');
 
   try {
     const res = await fetch(state.gasUrl);
@@ -1300,10 +1315,10 @@ async function pullFromGoogleSheet(silent = false) {
         saveLocalHolidays();
       }
       renderAll();
-      if (!silent) showToast('✅ 已从 Google Sheet 更新最新日程！');
+      if (!silent) showToast('已从 Google Sheet 更新');
     }
   } catch (err) {
-    if (!silent) showToast('⚠️ 拉取失败，请检查网络连接或 Apps Script 部署设置');
+    if (!silent) showToast('拉取失败，请检查网络连接');
   }
 }
 
@@ -1311,14 +1326,7 @@ function openConnectedGoogleSheet() {
   if (state.sheetUrl) {
     window.open(state.sheetUrl, '_blank');
   } else {
-    showToast('💡 您可以在上方填入您的 Google Sheet 表格网址，方便一键打开');
-  }
-}
-
-function toggleSetupGuide() {
-  const body = document.getElementById('setupGuideBody');
-  if (body) {
-    body.style.display = body.style.display === 'none' ? 'block' : 'none';
+    showToast('请先在上方填入您的 Google Sheet 网址');
   }
 }
 
@@ -1327,14 +1335,14 @@ function copyAppsScriptCode() {
     .then((r) => r.text())
     .then((code) => {
       navigator.clipboard.writeText(code);
-      showToast('📋 已复制 Google Apps Script 完整代码！请去 Google Sheet -> 扩展程序 -> Apps Script 粘贴');
+      showToast('已复制 Apps Script 代码');
     })
     .catch(() => {
-      showToast('请打开项目文件夹中的 google-apps-script/Code.gs 复制');
+      showToast('请打开 google-apps-script/Code.gs 复制');
     });
 }
 
-// ==================== 自定义学校特假 (Cuti Peristiwa) 管理 ====================
+// ==================== 自定义学校特假管理 ====================
 function addCustomHoliday() {
   const title = document.getElementById('newHolidayTitle').value.trim();
   const start = document.getElementById('newHolidayStart').value;
@@ -1342,7 +1350,7 @@ function addCustomHoliday() {
   const type = document.getElementById('newHolidayType').value;
 
   if (!title || !start) {
-    showToast('⚠️ 请填写假期名称与开始日期');
+    showToast('请填写假期名称与日期');
     return;
   }
 
@@ -1357,7 +1365,7 @@ function addCustomHoliday() {
   document.getElementById('newHolidayTitle').value = '';
   saveLocalHolidays();
   renderAll();
-  showToast('🏖️ 假期已添加至日历');
+  showToast('假期已添加');
   syncToGoogleSheetBackground();
 }
 
@@ -1365,7 +1373,7 @@ function deleteCustomHoliday(id) {
   state.customHolidays = state.customHolidays.filter((h) => h.id !== id);
   saveLocalHolidays();
   renderAll();
-  showToast('已移除该自定义假期');
+  showToast('已移除');
   syncToGoogleSheetBackground();
 }
 
@@ -1380,21 +1388,21 @@ function renderHolidayManageList() {
 
   el.innerHTML = all
     .map((h) => {
-      const badge = h.type === 'public' ? '🇲🇾 公假' : (h.type === 'peristiwa' ? '🏫 特假' : '🎒 校假');
+      const badge = h.type === 'public' ? '公假' : (h.type === 'peristiwa' ? '特假' : '校假');
       return `
         <div class="holiday-manage-item">
           <div>
-            <strong>${badge} ${escapeHtml(h.title)}</strong>
+            <strong>[${badge}] ${escapeHtml(h.title)}</strong>
             <div style="font-size:11px;color:#64748b;">${h.date}${h.endDate && h.endDate !== h.date ? ' ~ ' + h.endDate : ''}</div>
           </div>
-          ${h.isCustom ? `<button class="btn-danger-outline" style="padding:4px 8px;font-size:11px;" onclick="deleteCustomHoliday('${h.id}')">删除</button>` : `<span style="font-size:10px;color:#94a3b8;">系统内置</span>`}
+          ${h.isCustom ? `<button class="btn-danger-ghost" style="padding:4px 8px;font-size:11px;" onclick="deleteCustomHoliday('${h.id}')">删除</button>` : `<span style="font-size:10px;color:#94a3b8;">内置</span>`}
         </div>
       `;
     })
     .join('');
 }
 
-// ==================== JSON 备份与还原 ====================
+// ==================== 备份与还原 ====================
 function exportJsonBackup() {
   const payload = {
     exportedAt: new Date().toISOString(),
@@ -1425,9 +1433,9 @@ function importJsonBackup(event) {
       saveLocalHolidays();
       saveLocalStandaloneFiles();
       renderAll();
-      showToast('✅ 数据备份已成功恢复！');
+      showToast('备份已恢复');
     } catch (err) {
-      showToast('❌ 备份文件格式错误');
+      showToast('备份文件格式错误');
     }
   };
   reader.readAsText(file);
@@ -1450,9 +1458,7 @@ function showToast(msg) {
   t.className = 'toast';
   t.textContent = msg;
   container.appendChild(t);
-  setTimeout(() => {
-    t.remove();
-  }, 3200);
+  setTimeout(() => t.remove(), 2800);
 }
 
 function registerServiceWorker() {

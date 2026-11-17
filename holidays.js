@@ -51,7 +51,7 @@ const SAMPLE_TASKS = [
   {
     id: 'sample-1',
     title: 'Mesyuarat Kurikulum Bil. 4/2026 (第4次课程会议)',
-    date: '2026-11-12',
+    date: '2026-11-17',
     time: '14:00',
     category: 'bidang', // 'bidang' (蓝色) | 'school' (青色) | 'personal' (紫色)
     actionType: 'my_prep', // 'my_prep' (我需准备) | 'delegate' (交代老师) | 'event' (行程/活动)
@@ -72,7 +72,7 @@ const SAMPLE_TASKS = [
   {
     id: 'sample-2',
     title: '各科主任提交年终 Panitia 报告 & 2027 预算',
-    date: '2026-11-12',
+    date: '2026-11-17',
     time: '16:00',
     category: 'bidang',
     actionType: 'delegate',
@@ -92,8 +92,8 @@ const SAMPLE_TASKS = [
   },
   {
     id: 'sample-3',
-    title: '配合 GPK Koko：毕业典礼暨颁奖礼 (Hari Anugerah) 学术奖项名单核对',
-    date: '2026-11-12',
+    title: '配合 GPK Koko：毕业典礼暨颁奖礼 (Hari Anugerah) 学术奖项核对',
+    date: '2026-11-17',
     time: '10:30',
     category: 'school',
     actionType: 'my_prep',
@@ -107,7 +107,7 @@ const SAMPLE_TASKS = [
   {
     id: 'sample-4',
     title: '下班后带家人晚餐 & 购买日常用品',
-    date: '2026-11-12',
+    date: '2026-11-17',
     time: '18:30',
     category: 'personal',
     actionType: 'event',

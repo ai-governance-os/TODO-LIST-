@@ -1,4 +1,4 @@
-const CACHE_NAME = 'gpk-pentadbiran-v1';
+const CACHE_NAME = 'gpk-pentadbiran-v2';
 const ASSETS = [
   './',
   './index.html',
